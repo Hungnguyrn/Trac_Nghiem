@@ -1006,6 +1006,11 @@ body[data-view="notes"] main { width: min(100%, 1240px); min-width: 0; }
 .txt-in:focus{border-color:#bdbdbd;outline:0}
 .ask-err{min-height:1.4em;margin:8px 0 0;font-size:13px;color:#e6e6e6}
 
+.doc[draggable="true"]{cursor:grab}
+.doc.dragging{opacity:.4}
+.fld.drop-over{border-radius:12px;outline:1px dashed #bdbdbd;outline-offset:2px;background:rgba(255,255,255,.05)}
+.fld.drop-over>.fld-h{border-color:#f5f5f5}
+
 </style>
 </head>
 <body data-view="start">
@@ -1927,8 +1932,8 @@ function nAdd(name,text,folder){
 
 /* ---------- Danh sách tài liệu theo thư mục ---------- */
 function nDocRow(d,t){
-  var on=d.id===N.cur;
-  return '<div class="doc'+(on?' on':'')+'" role="listitem"><button type="button" class="doc-open" data-doc="'+d.id+'"'+(on?' aria-current="true"':'')+'><i class="ph ph-file-text" aria-hidden="true"></i><span>'+esc(t)+'</span></button>'+
+  var on=d.id===N.cur,drag=N.folders.length>0;
+  return '<div class="doc'+(on?' on':'')+'" role="listitem" data-docid="'+d.id+'"'+(drag?' draggable="true"':'')+'><button type="button" class="doc-open" data-doc="'+d.id+'"'+(on?' aria-current="true"':'')+'><i class="ph ph-file-text" aria-hidden="true"></i><span>'+esc(t)+'</span></button>'+
     '<button type="button" class="doc-mv" data-move="'+d.id+'" title="Chuyển vào thư mục" aria-label="Chuyển tài liệu '+esc(t)+' vào thư mục"><i class="ph ph-folder-simple" aria-hidden="true"></i></button>'+
     '<button type="button" class="doc-del" data-del="'+d.id+'" title="Xóa tài liệu" aria-label="Xóa tài liệu '+esc(t)+'"><i class="ph ph-trash" aria-hidden="true"></i></button></div>';
 }
@@ -2034,6 +2039,50 @@ function nFolderDelete(fid){
     '<p class="hint" style="margin-top:12px">“Chỉ xóa thư mục” giữ lại các tài liệu trong mục Chưa phân loại.</p>');
   $('#fdNo').onclick=closeModal;$('#fdAll').onclick=function(){remove(true)};$('#fdKeep').onclick=function(){remove(false)};
 }
+/* Chuyển tài liệu sang thư mục khác (dùng chung cho nút chuyển và kéo thả); fid rỗng = Chưa phân loại */
+function nPutDoc(d,fid){
+  fid=fid||'';
+  if((nFolderById(d.folder)?d.folder:'')===fid)return false;
+  if(fid)d.folder=fid;else delete d.folder;
+  if(d.id===N.cur)NU.folder=fid||null;
+  nFolderOpen(fid);nSave();nDrawSide();
+  return true;
+}
+/* Kéo thả: kéo một tài liệu thả lên thư mục. Chỉ nhận kéo từ danh sách, không lẫn với kéo file từ máy vào trang. */
+var NDRAG_TYPE='text/x-quiz-doc';
+function nDragBind(side){
+  var over=null;
+  function clear(){if(over){over.classList.remove('drop-over');over=null}}
+  function isDocDrag(e){var t=e.dataTransfer&&e.dataTransfer.types;return !!t&&Array.prototype.indexOf.call(t,NDRAG_TYPE)>=0}
+  side.addEventListener('dragstart',function(e){
+    var row=e.target.closest?e.target.closest('.doc[data-docid]'):null;
+    if(!row||!e.dataTransfer)return;
+    e.dataTransfer.setData(NDRAG_TYPE,row.dataset.docid);
+    e.dataTransfer.setData('text/plain',row.dataset.docid);
+    e.dataTransfer.effectAllowed='move';
+    row.classList.add('dragging');
+  });
+  side.addEventListener('dragend',function(){
+    clear();
+    Array.prototype.forEach.call(side.querySelectorAll('.dragging'),function(r){r.classList.remove('dragging')});
+  });
+  side.addEventListener('dragover',function(e){
+    if(!isDocDrag(e))return;
+    var f=e.target.closest?e.target.closest('.fld'):null;
+    if(!f){clear();return}
+    e.preventDefault();e.dataTransfer.dropEffect='move';
+    if(over!==f){clear();over=f;f.classList.add('drop-over')}
+  });
+  side.addEventListener('dragleave',function(e){if(over&&!over.contains(e.relatedTarget))clear()});
+  side.addEventListener('drop',function(e){
+    if(!isDocDrag(e))return;
+    var f=e.target.closest?e.target.closest('.fld'):null;
+    clear();if(!f)return;
+    e.preventDefault();
+    var id=e.dataTransfer.getData(NDRAG_TYPE),d=N.docs.filter(function(x){return x.id===id})[0];
+    if(d)nPutDoc(d,f.dataset.fid);
+  });
+}
 function nMoveDoc(id){
   var d=N.docs.filter(function(x){return x.id===id})[0];if(!d)return;
   var cur=nFolderById(d.folder)?d.folder:'';
@@ -2045,12 +2094,7 @@ function nMoveDoc(id){
     '<button type="button" class="btn" data-to="__new"><i class="ph ph-folder-plus" aria-hidden="true"></i> Thư mục mới…</button></div>'+
     '<div class="btns"><button class="btn" id="mvNo">Hủy</button></div>');
   $('#mvNo').onclick=closeModal;
-  function put(fid){
-    closeModal();
-    if(fid)d.folder=fid;else delete d.folder;
-    if(d.id===N.cur)NU.folder=fid||null;
-    nFolderOpen(fid);nSave();nDrawSide();
-  }
+  function put(fid){closeModal();nPutDoc(d,fid)}
   Array.prototype.forEach.call(document.querySelectorAll('#modal [data-to]'),function(b){
     b.onclick=function(){
       var to=b.dataset.to;
@@ -2378,6 +2422,7 @@ function nBind(){
     if(t.closest('#nNew')){nNew();return}
     if(t.closest('#closeNav'))document.body.classList.remove('nav-open');
   };
+  nDragBind($('#side'));
   nMapBind();
   $('#nmain').onclick=function(e){
     var t=e.target,c=t.closest('[data-copy]');
@@ -2401,7 +2446,12 @@ function nBind(){
     if(action){e.preventDefault();nMapAct(wrap,action)}
   };
   var v=$('#view');
-  v.ondragover=function(e){if(document.body.dataset.view!=='notes')return;e.preventDefault();v.classList.add('dropping')};
+  v.ondragover=function(e){
+    if(document.body.dataset.view!=='notes')return;
+    var ty=e.dataTransfer&&e.dataTransfer.types;
+    if(ty&&Array.prototype.indexOf.call(ty,'Files')<0)return;
+    e.preventDefault();v.classList.add('dropping');
+  };
   v.ondragleave=function(e){if(!e.relatedTarget||!v.contains(e.relatedTarget))v.classList.remove('dropping')};
   v.ondrop=function(e){
     v.classList.remove('dropping');
